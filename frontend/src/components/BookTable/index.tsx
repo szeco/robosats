@@ -13,6 +13,8 @@ import {
   Tooltip,
   styled,
   Skeleton,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import {
   DataGrid,
@@ -25,8 +27,15 @@ import {
   type GridRenderCellParams,
 } from '@mui/x-data-grid';
 import currencyDict from '../../../static/assets/currencies.json';
-import { type PublicOrder } from '../../models';
-import { filterOrders, hexToRgb, statusBadgeColor, pn, amountToString } from '../../utils';
+import { type PublicOrder, type BookFilterSettings, defaultBookFilterSettings } from '../../models';
+import {
+  filterOrders,
+  hexToRgb,
+  statusBadgeColor,
+  pn,
+  amountToString,
+  getOrderPrice,
+} from '../../utils';
 import BookControl from './BookControl';
 
 import { FlagWithProps } from '../Icons';
@@ -34,11 +43,17 @@ import { PaymentStringAsIcons } from '../PaymentMethods';
 import RobotAvatar from '../RobotAvatar';
 
 // Icons
-import { Fullscreen, FullscreenExit, Refresh } from '@mui/icons-material';
+import {
+  Fullscreen,
+  FullscreenExit,
+  NotificationsActive,
+  Refresh,
+} from '@mui/icons-material';
 import { AppContext, type UseAppStoreType } from '../../contexts/AppContext';
 import { FederationContext, type UseFederationStoreType } from '../../contexts/FederationContext';
 import headerStyleFix from '../DataGrid/HeaderFix';
 import thirdParties from '../../../static/thirdparties.json';
+import { systemClient } from '../../services/System';
 
 const ClickThroughDataGrid = styled(DataGrid)({
   '& .MuiDataGrid-overlayWrapperInner': {
@@ -101,6 +116,10 @@ const BookTable = ({
   });
   const [fullscreen, setFullscreen] = useState(defaultFullscreen);
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
+  const [advancedFilters, setAdvancedFilters] = useState<BookFilterSettings>(
+    defaultBookFilterSettings,
+  );
+  const [tableNotificationsEnabled, setTableNotificationsEnabled] = useState<boolean>(false);
   const [sortModel, setSortModel] = useState<GridSortModel>(
     fav.type === 0 || fav.type === 1
       ? [{ field: 'premium', sort: fav.type === 0 ? 'desc' : 'asc' }]
@@ -108,6 +127,8 @@ const BookTable = ({
   );
   const [page, setPage] = useState<number>(0);
   const prevFavTypeRef = useRef<number>();
+  const alertedMatchIdsRef = useRef<string[]>([]);
+  const paymentMethodsLoadedRef = useRef<boolean>(false);
 
   useEffect(() => {
     const prevFavType = prevFavTypeRef.current;
@@ -161,8 +182,66 @@ const BookTable = ({
   }, [defaultPageSize]);
 
   useEffect(() => {
-    setPaymentMethods([]);
+    void systemClient.getItem('book_table_advanced_filters').then((value) => {
+      if (!value) {
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(value) as Partial<BookFilterSettings>;
+        setAdvancedFilters({
+          maxPremium: parsed.maxPremium ?? defaultBookFilterSettings.maxPremium,
+          maxBond: parsed.maxBond ?? defaultBookFilterSettings.maxBond,
+        });
+      } catch {
+        console.warn('Failed to restore saved book filters.');
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    systemClient.setItem('book_table_advanced_filters', JSON.stringify(advancedFilters));
+  }, [advancedFilters]);
+
+  useEffect(() => {
+    void systemClient.getItem('book_table_payment_methods').then((value) => {
+      const stored = value ? (JSON.parse(value) as Record<string, string[]>) : {};
+      const nextMethods = stored[fav.mode] ?? [];
+      paymentMethodsLoadedRef.current = true;
+      setPaymentMethods(nextMethods);
+    });
+
+    void systemClient.getItem('book_table_notifications_enabled').then((value) => {
+      setTableNotificationsEnabled(value === 'true');
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!paymentMethodsLoadedRef.current) {
+      return;
+    }
+
+    void systemClient.getItem('book_table_payment_methods').then((value) => {
+      const stored = value ? (JSON.parse(value) as Record<string, string[]>) : {};
+      setPaymentMethods(stored[fav.mode] ?? []);
+    });
   }, [fav.mode]);
+
+  useEffect(() => {
+    if (!paymentMethodsLoadedRef.current) {
+      return;
+    }
+
+    void systemClient.getItem('book_table_payment_methods').then((value) => {
+      const stored = value ? (JSON.parse(value) as Record<string, string[]>) : {};
+      const nextStored = { ...stored, [fav.mode]: paymentMethods };
+      systemClient.setItem('book_table_payment_methods', JSON.stringify(nextStored));
+    });
+  }, [paymentMethods, fav.mode]);
+
+  useEffect(() => {
+    systemClient.setItem('book_table_notifications_enabled', String(tableNotificationsEnabled));
+  }, [tableNotificationsEnabled]);
 
   const localeText = useMemo(() => {
     return {
@@ -394,10 +473,7 @@ const BookTable = ({
       flex: 2,
       renderCell: (params: { row: PublicOrder }) => {
         const currencyCode = String(currencyDict[params.row.currency.toString()]);
-        const limits = federation.getLimits(params.row.coordinatorShortAlias);
-        const premium = parseFloat(params.row.premium);
-        const limitPrice = limits[params.row.currency.toString()]?.price;
-        const price = (limitPrice ?? 1) * (1 + premium / 100);
+        const price = getOrderPrice(params.row, federation);
 
         return (
           <div
@@ -406,7 +482,7 @@ const BookTable = ({
               onOrderClicked(params.row.id, params.row.coordinatorShortAlias);
             }}
           >
-            {limitPrice ? (
+            {price !== null ? (
               `${pn(Math.round(price))} ${currencyCode}/BTC`
             ) : (
               <Skeleton variant='rectangular' width={200} height={20} style={{ marginTop: 15 }} />
@@ -455,19 +531,14 @@ const BookTable = ({
         const bondSize = Number(params.row.bond_size);
         const isLowBond = bondSize > 0 && bondSize < defaultBondSize;
 
-        const limits = federation.getLimits(params.row.coordinatorShortAlias);
-        const premium = parseFloat(params.row.premium);
-        const limitPrice = limits[params.row.currency.toString()]?.price;
-        const calculatedPrice = limitPrice
-          ? Math.round((limitPrice ?? 1) * (1 + premium / 100))
-          : null;
+        const calculatedPrice = getOrderPrice(params.row, federation);
 
         const tooltipTitle = (
           <span>
-            {calculatedPrice ? `${pn(calculatedPrice)} ${currencyCode}/BTC` : ''}
+            {calculatedPrice !== null ? `${pn(Math.round(calculatedPrice))} ${currencyCode}/BTC` : ''}
             {!isLargeScreen && isLowBond && (
               <>
-                {calculatedPrice && <br />}
+                {calculatedPrice !== null && <br />}
                 {t(
                   'Low bond: This maker has set a bond below the default {{defaultBond}}%. Lower bonds mean reduced trade security.',
                   { defaultBond: defaultBondSize },
@@ -634,13 +705,11 @@ const BookTable = ({
       type: 'number',
       flex: 1,
       renderCell: (params: { row: PublicOrder }) => {
-        const limits = federation.getLimits(params.row.coordinatorShortAlias);
         const amount =
           params.row.has_range === true
             ? parseFloat(params.row.max_amount)
             : parseFloat(params.row.amount);
-        const premium = parseFloat(params.row.premium);
-        const price = (limits[params.row.currency.toString()]?.price ?? 1) * (1 + premium / 100);
+        const price = getOrderPrice(params.row, federation) ?? 1;
         const satoshisNow = (100000000 * amount) / price;
 
         return (
@@ -871,6 +940,26 @@ const BookTable = ({
                 {fullscreen ? <FullscreenExit /> : <Fullscreen />}
               </IconButton>
             </Grid>
+            <Grid item>
+              <FormControlLabel
+                sx={{ marginLeft: 0.5 }}
+                control={
+                  <Switch
+                    size='small'
+                    checked={tableNotificationsEnabled}
+                    onChange={(e) => {
+                      setTableNotificationsEnabled(e.target.checked);
+                    }}
+                  />
+                }
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <NotificationsActive fontSize='small' />
+                    <Typography variant='caption'>{t('Alerts')}</Typography>
+                  </Box>
+                }
+              />
+            </Grid>
             {settings.connection === 'api' && (
               <Grid item xs={6}>
                 <IconButton
@@ -934,7 +1023,7 @@ const BookTable = ({
       components.footer = Footer;
     }
     return components;
-  }, [showNoResults, showFooter, fullscreen]);
+  }, [showNoResults, showFooter, fullscreen, tableNotificationsEnabled, settings.connection]);
 
   const filteredOrders = useMemo(() => {
     return showControls
@@ -942,9 +1031,131 @@ const BookTable = ({
           federation,
           baseFilter: fav,
           paymentMethods,
+          maxPremium:
+            advancedFilters.maxPremium.trim() === '' ? null : Number(advancedFilters.maxPremium),
+          maxBond: advancedFilters.maxBond.trim() === '' ? null : Number(advancedFilters.maxBond),
         })
       : orders;
-  }, [showControls, orders, fav, paymentMethods]);
+  }, [showControls, orders, fav, paymentMethods, advancedFilters, federation]);
+
+  const alertFilterKey = useMemo(() => {
+    return JSON.stringify({
+      fav,
+      paymentMethods,
+      maxPremium: advancedFilters.maxPremium,
+      maxBond: advancedFilters.maxBond,
+    });
+  }, [fav, paymentMethods, advancedFilters]);
+
+  useEffect(() => {
+    if (!tableNotificationsEnabled) {
+      alertedMatchIdsRef.current = [];
+    }
+  }, [alertFilterKey]);
+
+  useEffect(() => {
+    if (!tableNotificationsEnabled || !settings.offerNotificationsEnabled) {
+      alertedMatchIdsRef.current = [];
+      return;
+    }
+
+    if (federation.loading) {
+      return;
+    }
+
+    const currentMatchIds = filteredOrders.map(
+      (order) => `${String(order.coordinatorShortAlias)}/${order.id}`,
+    );
+    const previousMatchIds = new Set(alertedMatchIdsRef.current);
+    const newMatches = filteredOrders.filter(
+      (order) => !previousMatchIds.has(`${String(order.coordinatorShortAlias)}/${order.id}`),
+    );
+
+    if (newMatches.length > 0) {
+      newMatches.forEach((match) => {
+        const currencyCode =
+          match.currency !== null ? currencyDict[String(match.currency)] : t('selected currency');
+        const price = getOrderPrice(match, federation);
+        const amount = amountToString(
+          match.amount,
+          match.has_range,
+          Number(match.min_amount ?? 0),
+          Number(match.max_amount ?? 0),
+        );
+        const satoshisBaseAmount = match.has_range ? Number(match.max_amount) : Number(match.amount);
+        const satoshisNow =
+          price !== null && price > 0 ? (100000000 * satoshisBaseAmount) / price : null;
+        const satoshisNowLabel =
+          satoshisNow === null
+            ? '-'
+            : satoshisNow > 1000000
+              ? `${pn(Math.round(satoshisNow / 10000) / 100)} M`
+              : `${pn(Math.round(satoshisNow / 1000))} K`;
+        const title = t('RoboSats offer: {{currency}}', { currency: currencyCode });
+        const body = [
+          price !== null ? t('Price {{price}} {{currency}}/BTC', {
+            price: pn(Math.round(price)),
+            currency: currencyCode,
+          }) : t('Price unavailable'),
+          t('Amount {{amount}}', { amount }),
+          t('Margin {{margin}}%', {
+            margin: parseFloat(String(match.premium)).toFixed(2),
+          }),
+          t('Sats now {{sats}}', { sats: satoshisNowLabel }),
+        ].join(' • ');
+
+        if (
+          settings.offerNotificationProvider === 'browser' &&
+          typeof Notification !== 'undefined' &&
+          Notification.permission === 'granted'
+        ) {
+          const notification = new Notification(title, {
+            body,
+            tag: `book-alert-${match.coordinatorShortAlias}-${match.id}`,
+          });
+
+          notification.onclick = () => {
+            window.focus();
+            onOrderClicked(match.id, match.coordinatorShortAlias ?? '');
+            notification.close();
+          };
+        }
+
+        if (
+          settings.offerNotificationProvider === 'pushover' &&
+          settings.pushoverAppToken.trim() !== '' &&
+          settings.pushoverUserKey.trim() !== ''
+        ) {
+          const formData = new URLSearchParams();
+          formData.set('token', settings.pushoverAppToken);
+          formData.set('user', settings.pushoverUserKey);
+          formData.set('title', title);
+          formData.set('message', body);
+          formData.set('url', `${window.location.origin}/offers`);
+          formData.set('url_title', 'Open RoboSats Offers');
+
+          if (settings.pushoverDevice.trim() !== '') {
+            formData.set('device', settings.pushoverDevice);
+          }
+
+          void fetch('https://api.pushover.net/1/messages.json', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+            },
+            body: formData.toString(),
+            mode: 'no-cors',
+          }).catch(() => {
+            console.warn('Failed to send Pushover notification.');
+          });
+        }
+      });
+    }
+
+    alertedMatchIdsRef.current = Array.from(
+      new Set([...alertedMatchIdsRef.current, ...currentMatchIds]),
+    );
+  }, [filteredOrders, federation, onOrderClicked, settings, t, tableNotificationsEnabled]);
 
   if (!fullscreen) {
     return (
@@ -974,6 +1185,8 @@ const BookTable = ({
             width={width}
             paymentMethod={paymentMethods}
             setPaymentMethods={setPaymentMethods}
+            advancedFilters={advancedFilters}
+            setAdvancedFilters={setAdvancedFilters}
           />
         )}
         <ClickThroughDataGrid
@@ -1014,6 +1227,8 @@ const BookTable = ({
               width={width}
               paymentMethod={paymentMethods}
               setPaymentMethods={setPaymentMethods}
+              advancedFilters={advancedFilters}
+              setAdvancedFilters={setAdvancedFilters}
             />
           )}
           <ClickThroughDataGrid

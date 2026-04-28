@@ -1,12 +1,13 @@
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Typography, Grid, Select, MenuItem, Box } from '@mui/material';
+import { Typography, Grid, Select, MenuItem, Box, TextField } from '@mui/material';
 import currencyDict from '../../../static/assets/currencies.json';
 import { useTheme } from '@mui/system';
 import { AutocompletePayments } from '../MakerForm';
 import { fiatMethods, swapMethods, PaymentIcon } from '../PaymentMethods';
 import { FlagWithProps, SendReceiveIcon } from '../Icons';
 import { AppContext, type UseAppStoreType } from '../../contexts/AppContext';
+import { type BookFilterSettings } from '../../models';
 
 import CheckBoxOutlineBlankIcon from '@mui/icons-material/CheckBoxOutlineBlank';
 import SwapCalls from '@mui/icons-material/SwapCalls';
@@ -18,12 +19,16 @@ interface BookControlProps {
   width: number;
   paymentMethod: string[];
   setPaymentMethods: (state: string[]) => void;
+  advancedFilters: BookFilterSettings;
+  setAdvancedFilters: (state: BookFilterSettings) => void;
 }
 
 const BookControl = ({
   width,
   paymentMethod,
   setPaymentMethods,
+  advancedFilters,
+  setAdvancedFilters,
 }: BookControlProps): React.JSX.Element => {
   const { fav, setFav } = useContext<UseAppStoreType>(AppContext);
   const { federation } = useContext<UseFederationStoreType>(FederationContext);
@@ -37,7 +42,7 @@ const BookControl = ({
     const medium = small + 13;
     const large = medium + (t('and use').length + t('pay with').length) * 0.6 + 5;
     return [small, medium, large];
-  }, [i18n.language, fav.mode]);
+  }, [i18n.language, fav.mode, t]);
 
   useEffect(() => {
     if (fav.type === null) {
@@ -62,7 +67,7 @@ const BookControl = ({
     setFav({ ...fav, coordinator });
   };
 
-  const handleOrderTypeChange = (mouseEvent: React.MouseEvent, select: object): void => {
+  const handleOrderTypeChange = (_mouseEvent: React.MouseEvent, select: object): void => {
     if (select.props.value === 'sell') {
       const currency = fav.currency === 1000 ? 0 : fav.currency;
       setFav({ ...fav, mode: 'fiat', type: 0, currency });
@@ -369,6 +374,32 @@ const BookControl = ({
             </Select>
           </Grid>
         ) : null}
+
+        <Grid item>
+          <TextField
+            size='small'
+            label={t('Max Margin %')}
+            value={advancedFilters.maxPremium}
+            onChange={(e) => {
+              setAdvancedFilters({ ...advancedFilters, maxPremium: e.target.value });
+            }}
+            inputProps={{ inputMode: 'decimal' }}
+            sx={{ width: width > large ? '8.2em' : '7em' }}
+          />
+        </Grid>
+
+        <Grid item>
+          <TextField
+            size='small'
+            label={t('Max Bond %')}
+            value={advancedFilters.maxBond}
+            onChange={(e) => {
+              setAdvancedFilters({ ...advancedFilters, maxBond: e.target.value });
+            }}
+            inputProps={{ inputMode: 'decimal' }}
+            sx={{ width: width > large ? '7.5em' : '7em' }}
+          />
+        </Grid>
 
         {width > large ? (
           <Grid item sx={{ position: 'relative', top: '0.5em' }}>

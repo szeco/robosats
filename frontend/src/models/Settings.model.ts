@@ -64,6 +64,29 @@ class BaseSettings {
     systemClient.getItem('settings_use_proxy').then((result) => {
       this.useProxy = client === 'mobile' && result !== 'false';
     });
+
+    systemClient.getItem('settings_offer_notifications_enabled').then((result) => {
+      this.offerNotificationsEnabled = result === 'true';
+    });
+
+    systemClient.getItem('settings_offer_notification_provider').then((result) => {
+      this.offerNotificationProvider =
+        result && result !== ''
+          ? (result as 'browser' | 'pushover')
+          : this.offerNotificationProvider;
+    });
+
+    systemClient.getItem('settings_pushover_app_token').then((result) => {
+      this.pushoverAppToken = result ?? '';
+    });
+
+    systemClient.getItem('settings_pushover_user_key').then((result) => {
+      this.pushoverUserKey = result ?? '';
+    });
+
+    systemClient.getItem('settings_pushover_device').then((result) => {
+      this.pushoverDevice = result ?? '';
+    });
   }
 
   getMode = (): 'light' | 'dark' => {
@@ -87,6 +110,11 @@ class BaseSettings {
   public selfhostedClient: boolean = false;
   public useProxy: boolean = false;
   public androidNotifications: boolean = false;
+  public offerNotificationsEnabled: boolean = false;
+  public offerNotificationProvider: 'browser' | 'pushover' = 'browser';
+  public pushoverAppToken: string = '';
+  public pushoverUserKey: string = '';
+  public pushoverDevice: string = '';
 }
 
 export default BaseSettings;

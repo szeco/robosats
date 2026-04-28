@@ -1,4 +1,8 @@
-import { type PublicOrder, type Favorites, type Federation } from '../models';
+import {
+  type PublicOrder,
+  type Favorites,
+  type Federation,
+} from '../models';
 import thirdParties from '../../static/thirdparties.json';
 
 interface AmountFilter {
@@ -12,6 +16,8 @@ interface FilterOrders {
   federation: Federation;
   baseFilter: Favorites;
   premium?: number | null;
+  maxPremium?: number | null;
+  maxBond?: number | null;
   amountFilter?: AmountFilter | null;
   paymentMethods?: string[];
 }
@@ -71,6 +77,8 @@ const filterOrders = function ({
   federation,
   baseFilter,
   premium = null,
+  maxPremium = null,
+  maxBond = null,
   paymentMethods = [],
   amountFilter = null,
 }: FilterOrders): PublicOrder[] {
@@ -91,6 +99,9 @@ const filterOrders = function ({
     const paymentMethodChecks =
       paymentMethods.length > 0 ? filterByPayment(order, paymentMethods) : true;
     const amountChecks = amountFilter !== null ? filterByAmount(order, amountFilter) : true;
+    const maxPremiumChecks =
+      maxPremium !== null ? Number(order.premium) <= maxPremium : true;
+    const maxBondChecks = maxBond !== null ? Number(order.bond_size || 0) <= maxBond : true;
     const hostChecks = filterByHost(order, baseFilter.coordinator, federation);
     return (
       coordinatorCheck &&
@@ -100,6 +111,8 @@ const filterOrders = function ({
       currencyChecks &&
       paymentMethodChecks &&
       amountChecks &&
+      maxPremiumChecks &&
+      maxBondChecks &&
       hostChecks
     );
   });

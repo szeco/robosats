@@ -16,7 +16,7 @@ COPY . .
 COPY ./nginx.conf /etc/nginx/nginx.conf
 
 RUN apk -U --no-cache upgrade \
-    && apk --no-cache add nginx
+    && apk --no-cache add nginx curl
 
 EXPOSE 80
 HEALTHCHECK CMD curl --fail http://localhost:80 || exit 1
