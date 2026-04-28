@@ -1101,6 +1101,9 @@ const BookTable = ({
           t('Margin {{margin}}%', {
             margin: parseFloat(String(match.premium)).toFixed(2),
           }),
+          t('Bond {{bond}}%', {
+            bond: match.bond_size || '0',
+          }),
           t('Sats now {{sats}}', { sats: satoshisNowLabel }),
         ].join(' • ');
 
